@@ -1,2 +1,2 @@
-# DWDWeatherMap.io
-A simple HTML page to visualize and download weather data on a map
+# DWDWeatherMap
+Interactive web app to visualize DWD weather data: map-based station selector, time-series plots, and data export.
