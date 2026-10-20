@@ -1,0 +1,1291 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950 text-slate-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DWD Weather Sensor Data Viewer</title>
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            500: '#0066cc',
+                            600: '#0052a3',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <!-- Leaflet Draw Plugin CSS & JS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+
+    <!-- Chart.js for Time Series -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- FontAwesome & Lucide Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        .leaflet-container {
+            background-color: #0b0f19 !important;
+            font-family: inherit;
+        }
+        .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+            background: rgba(15, 23, 42, 0.95) !important;
+            color: #f8fafc !important;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            backdrop-filter: blur(12px);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
+            border-radius: 0.75rem !important;
+        }
+        .leaflet-popup-content {
+            margin: 14px 16px !important;
+            line-height: 1.5;
+        }
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.6);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(100, 116, 139, 0.5);
+            border-radius: 3px;
+        }
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.92);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .leaflet-draw-toolbar a {
+            background-color: #1e293b !important;
+            border-color: #334155 !important;
+            color: #f1f5f9 !important;
+        }
+    </style>
+</head>
+<body class="h-full flex flex-col overflow-hidden antialiased select-none bg-slate-950 text-slate-100">
+
+    <!-- Header Navigation -->
+    <header class="h-16 border-b border-slate-800 bg-slate-900/90 px-4 flex items-center justify-between z-20 shrink-0 backdrop-blur-md">
+        <div class="flex items-center gap-3">
+            <div class="p-2 bg-blue-600/20 text-blue-400 rounded-lg border border-blue-500/30">
+                <i data-lucide="cloud-sun" class="w-6 h-6"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-base md:text-lg text-slate-100 flex items-center gap-2">
+                    DWD Weather Sensor Viewer
+                    <span class="text-xs bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded-full border border-blue-500/20 font-normal">Esri Topo Map</span>
+                </h1>
+                <p class="text-xs text-slate-400 hidden sm:block">Deutscher Wetterdienst live & historical weather observations via Bright Sky API</p>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <!-- Global Export CSV Button -->
+            <button onclick="exportRegionDataToCSV()" id="btnExportRegionCSV" disabled class="px-3 py-1.5 rounded-lg bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-600/30 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-medium flex items-center gap-1.5 transition">
+                <i data-lucide="download" class="w-4 h-4"></i>
+                <span class="hidden sm:inline">Export Region CSV</span>
+            </button>
+
+            <!-- Units Toggle -->
+            <div class="flex items-center bg-slate-800 p-1 rounded-lg border border-slate-700 text-xs font-medium">
+                <button id="unitMetricBtn" onclick="setUnits('metric')" class="px-2.5 py-1 rounded-md transition bg-blue-600 text-white shadow-sm">Metric</button>
+                <button id="unitImperialBtn" onclick="setUnits('imperial')" class="px-2.5 py-1 rounded-md transition text-slate-400 hover:text-slate-200">Imperial</button>
+            </div>
+
+            <!-- Mobile Drawer Toggle -->
+            <button id="toggleSidebarMobile" class="lg:hidden p-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-white">
+                <i data-lucide="sliders" class="w-5 h-5"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <div class="flex-1 flex relative overflow-hidden">
+
+        <!-- Sidebar Panel -->
+        <aside id="sidebar" class="absolute lg:relative z-10 w-full sm:w-96 h-full glass-panel flex flex-col border-r border-slate-800 transition-transform duration-300 transform -translate-x-full lg:translate-x-0">
+            
+            <div class="p-4 border-b border-slate-800 space-y-4 overflow-y-auto max-h-[50vh] lg:max-h-none shrink-0">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                        <i data-lucide="filter" class="w-4 h-4 text-blue-400"></i> Region & Time Query
+                    </h2>
+                    <button id="closeSidebarMobile" class="lg:hidden text-slate-400 hover:text-white p-1">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+
+                <!-- Region Selector Dropdown -->
+                <div class="space-y-1.5">
+                    <label class="text-xs text-slate-300 font-medium flex items-center justify-between">
+                        <span>1. Select Region Preset</span>
+                    </label>
+                    <select id="regionPreset" onchange="handleRegionSelect()" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500 transition">
+                        <option value="custom">-- Custom Selection / Map Viewport --</option>
+                        <option value="bavaria">Bavaria (Bayern)</option>
+                        <option value="nrw">North Rhine-Westphalia (NRW)</option>
+                        <option value="berlin">Berlin & Brandenburg</option>
+                        <option value="baden">Baden-Württemberg</option>
+                        <option value="north_sea">German North Sea Coast</option>
+                        <option value="saxony">Saxony (Sachsen)</option>
+                    </select>
+                </div>
+
+                <!-- Time Frame Selector -->
+                <div class="space-y-1.5">
+                    <label class="text-xs text-slate-300 font-medium flex items-center justify-between">
+                        <span>2. Time Frame Selection</span>
+                    </label>
+                    <select id="timeFrameSelect" onchange="handleTimeFrameChange()" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500 transition">
+                        <option value="current">Current / Latest</option>
+                        <option value="24h">Past 24 Hours</option>
+                        <option value="3d">Past 3 Days</option>
+                        <option value="7d">Past 7 Days</option>
+                        <option value="custom">Custom Date Range</option>
+                    </select>
+                </div>
+
+                <!-- Custom Date Range Picker Container (hidden by default) -->
+                <div id="customDateRangeContainer" class="hidden grid grid-cols-2 gap-2 p-2.5 rounded-lg bg-slate-950/80 border border-slate-800">
+                    <div>
+                        <label class="text-[10px] text-slate-400 block mb-1">Start Date</label>
+                        <input type="date" id="startDateInput" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="text-[10px] text-slate-400 block mb-1">End Date</label>
+                        <input type="date" id="endDateInput" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-blue-500">
+                    </div>
+                </div>
+
+                <!-- Fetch Data Action Button -->
+                <button id="btnFetchRegion" onclick="fetchDataForCurrentRegion()" class="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-semibold rounded-lg shadow-lg shadow-blue-600/20 border border-blue-400/30 flex items-center justify-center gap-2 transition">
+                    <i data-lucide="download-cloud" class="w-4 h-4"></i>
+                    <span>Fetch Region Data</span>
+                </button>
+
+                <!-- Status Feedback Box -->
+                <div id="queryStatus" class="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800 text-xs text-slate-400 flex items-start gap-2">
+                    <i data-lucide="info" class="w-4 h-4 text-amber-400 shrink-0 mt-0.5"></i>
+                    <span id="statusText">Select a region preset or draw a bounding box on the map, choose a time frame, then click "Fetch Region Data".</span>
+                </div>
+
+                <!-- Map Overlay Parameter Selector -->
+                <div class="space-y-1.5">
+                    <label class="text-xs text-slate-300 font-medium">Map Display Parameter</label>
+                    <div class="grid grid-cols-3 gap-1.5" id="metricSelector">
+                        <button onclick="selectMetric('temperature')" data-metric="temperature" class="metric-btn active text-xs py-1.5 px-2 rounded border border-blue-500/50 bg-blue-500/20 text-blue-300 flex items-center justify-center gap-1 font-medium transition">
+                            <i data-lucide="thermometer" class="w-3.5 h-3.5"></i> Temp
+                        </button>
+                        <button onclick="selectMetric('wind_speed')" data-metric="wind_speed" class="metric-btn text-xs py-1.5 px-2 rounded border border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1 font-medium transition">
+                            <i data-lucide="wind" class="w-3.5 h-3.5"></i> Wind Spd
+                        </button>
+                        <button onclick="selectMetric('wind_direction')" data-metric="wind_direction" class="metric-btn text-xs py-1.5 px-2 rounded border border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1 font-medium transition">
+                            <i data-lucide="compass" class="w-3.5 h-3.5"></i> Wind Dir
+                        </button>
+                        <button onclick="selectMetric('cloud_cover')" data-metric="cloud_cover" class="metric-btn text-xs py-1.5 px-2 rounded border border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1 font-medium transition">
+                            <i data-lucide="cloud" class="w-3.5 h-3.5"></i> Cloud
+                        </button>
+                        <button onclick="selectMetric('relative_humidity')" data-metric="relative_humidity" class="metric-btn text-xs py-1.5 px-2 rounded border border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1 font-medium transition">
+                            <i data-lucide="droplet" class="w-3.5 h-3.5"></i> Humidity
+                        </button>
+                        <button onclick="selectMetric('precipitation')" data-metric="precipitation" class="metric-btn text-xs py-1.5 px-2 rounded border border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1 font-medium transition">
+                            <i data-lucide="cloud-rain" class="w-3.5 h-3.5"></i> Rain
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Region Summary Statistics Dashboard -->
+            <div id="regionSummary" class="p-3 border-b border-slate-800 bg-slate-900/40 hidden space-y-2 shrink-0">
+                <h3 class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                    <i data-lucide="bar-chart-3" class="w-3.5 h-3.5 text-emerald-400"></i> Region Summary
+                </h3>
+                <div class="grid grid-cols-3 gap-2 text-center">
+                    <div class="p-1.5 rounded-lg bg-slate-950/70 border border-slate-800">
+                        <span class="text-[9px] text-slate-400 block">Stations</span>
+                        <span id="summaryCount" class="font-bold text-slate-100 text-xs">0</span>
+                    </div>
+                    <div class="p-1.5 rounded-lg bg-slate-950/70 border border-slate-800">
+                        <span class="text-[9px] text-slate-400 block">Avg Temp</span>
+                        <span id="summaryAvgTemp" class="font-bold text-amber-400 text-xs">--</span>
+                    </div>
+                    <div class="p-1.5 rounded-lg bg-slate-950/70 border border-slate-800">
+                        <span class="text-[9px] text-slate-400 block">Max Wind</span>
+                        <span id="summaryMaxWind" class="font-bold text-teal-400 text-xs">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Station List Section -->
+            <div class="flex-1 overflow-y-auto p-3 space-y-1.5" id="stationList">
+                <div class="h-full flex flex-col items-center justify-center text-center p-6 text-slate-500 text-xs">
+                    <i data-lucide="map-pin-off" class="w-10 h-10 mb-2 stroke-1 text-slate-600"></i>
+                    <p>No region stations queried yet.</p>
+                    <p class="text-[11px] text-slate-600 mt-1">Select region or draw map box, then fetch weather data.</p>
+                </div>
+            </div>
+
+            <!-- Sidebar Footer -->
+            <div class="p-3 border-t border-slate-800 text-[11px] text-slate-500 flex justify-between items-center bg-slate-950/40 shrink-0">
+                <span>DWD via Bright Sky API</span>
+                <span id="timestampFooter">--</span>
+            </div>
+        </aside>
+
+        <!-- Leaflet Map Main Container -->
+        <main class="flex-1 relative h-full">
+            <div id="map" class="w-full h-full"></div>
+
+            <!-- Top Action Bar Overlay -->
+            <div class="absolute top-4 left-4 z-[400] flex items-center gap-2">
+                <button onclick="fetchCurrentViewportData()" class="glass-panel hover:bg-slate-800 text-slate-200 px-3.5 py-2 rounded-xl text-xs font-medium shadow-xl border border-slate-700 flex items-center gap-2 transition">
+                    <i data-lucide="scan" class="w-4 h-4 text-blue-400"></i>
+                    <span>Fetch Current Viewport</span>
+                </button>
+                <button onclick="clearCurrentRegion()" class="glass-panel hover:bg-slate-800 text-slate-300 hover:text-white px-3 py-2 rounded-xl text-xs font-medium shadow-xl border border-slate-700 flex items-center gap-1.5 transition">
+                    <i data-lucide="trash-2" class="w-4 h-4 text-rose-400"></i>
+                    <span>Clear Region</span>
+                </button>
+            </div>
+
+            <!-- Map Legend Overlay -->
+            <div class="absolute bottom-6 right-6 z-[400] glass-panel p-3 rounded-xl shadow-2xl border border-slate-800 text-xs hidden sm:block">
+                <div id="legendTitle" class="font-semibold text-slate-200 mb-2">Temperature (°C)</div>
+                <div class="flex items-center gap-1" id="legendGradient"></div>
+                <div class="flex justify-between text-[10px] text-slate-400 mt-1" id="legendLabels"></div>
+            </div>
+
+            <!-- Loading Spinner Popup -->
+            <div id="mapLoading" class="hidden absolute top-16 left-1/2 -translate-x-1/2 z-[400] bg-slate-900/95 text-slate-100 px-4 py-2.5 rounded-full border border-slate-700 text-xs font-medium shadow-2xl flex items-center gap-2.5 backdrop-blur-md">
+                <i data-lucide="loader-2" class="w-4 h-4 animate-spin text-blue-400"></i>
+                <span id="loadingMessage">Fetching region observations...</span>
+            </div>
+        </main>
+
+    </div>
+
+    <!-- Station Detail Modal / Time Series Drawer -->
+    <div id="stationModal" class="fixed inset-0 z-[500] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 hidden">
+        <div class="glass-panel w-full max-w-4xl max-h-[92vh] rounded-2xl border border-slate-800 flex flex-col shadow-2xl overflow-hidden">
+            <!-- Modal Header -->
+            <div class="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/60 shrink-0">
+                <div class="flex items-center gap-3">
+                    <div class="p-2 bg-blue-500/10 text-blue-400 rounded-lg border border-blue-500/20">
+                        <i data-lucide="radio" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <h3 id="modalStationName" class="font-bold text-base text-slate-100">Station Name</h3>
+                        <p id="modalStationMeta" class="text-xs text-slate-400">ID: -- | Lat: --, Lon: --</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="exportStationCSV()" class="px-3 py-1.5 rounded-lg bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-600/30 text-xs font-medium flex items-center gap-1.5 transition">
+                        <i data-lucide="download" class="w-4 h-4"></i>
+                        <span>Export Station CSV</span>
+                    </button>
+                    <button onclick="closeStationModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-white bg-slate-800/60 hover:bg-slate-800 transition">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Modal Content & Chart Area -->
+            <div class="p-4 flex-1 overflow-y-auto space-y-4">
+                <!-- Current Parameter Summary Cards -->
+                <div id="modalSummaryCards" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+                    <!-- Cards rendered dynamically -->
+                </div>
+
+                <!-- Plot Measurement Selector Controls -->
+                <div class="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-2">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                            <i data-lucide="sliders-horizontal" class="w-4 h-4 text-blue-400"></i>
+                            Select Measurements to Plot on Chart:
+                        </span>
+                        <span id="chartTimeframeLabel" class="text-xs text-slate-400">0 datapoints</span>
+                    </div>
+
+                    <!-- Plot Selection Toggles -->
+                    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 pt-1" id="chartMetricToggles">
+                        <label class="flex items-center gap-2 p-2 rounded-lg bg-slate-950/80 border border-slate-800 cursor-pointer hover:border-slate-700 transition">
+                            <input type="checkbox" id="plot_temperature" checked onchange="updateChartDatasets()" class="rounded border-slate-700 text-blue-600 focus:ring-0">
+                            <span class="text-xs font-medium text-blue-400 flex items-center gap-1"><i data-lucide="thermometer" class="w-3.5 h-3.5"></i> Temp</span>
+                        </label>
+                        <label class="flex items-center gap-2 p-2 rounded-lg bg-slate-950/80 border border-slate-800 cursor-pointer hover:border-slate-700 transition">
+                            <input type="checkbox" id="plot_wind_speed" checked onchange="updateChartDatasets()" class="rounded border-slate-700 text-emerald-600 focus:ring-0">
+                            <span class="text-xs font-medium text-emerald-400 flex items-center gap-1"><i data-lucide="wind" class="w-3.5 h-3.5"></i> Wind Spd</span>
+                        </label>
+                        <label class="flex items-center gap-2 p-2 rounded-lg bg-slate-950/80 border border-slate-800 cursor-pointer hover:border-slate-700 transition">
+                            <input type="checkbox" id="plot_wind_direction" checked onchange="updateChartDatasets()" class="rounded border-slate-700 text-amber-600 focus:ring-0">
+                            <span class="text-xs font-medium text-amber-400 flex items-center gap-1"><i data-lucide="compass" class="w-3.5 h-3.5"></i> Wind Dir</span>
+                        </label>
+                        <label class="flex items-center gap-2 p-2 rounded-lg bg-slate-950/80 border border-slate-800 cursor-pointer hover:border-slate-700 transition">
+                            <input type="checkbox" id="plot_cloud_cover" onchange="updateChartDatasets()" class="rounded border-slate-700 text-purple-600 focus:ring-0">
+                            <span class="text-xs font-medium text-purple-400 flex items-center gap-1"><i data-lucide="cloud" class="w-3.5 h-3.5"></i> Cloud</span>
+                        </label>
+                        <label class="flex items-center gap-2 p-2 rounded-lg bg-slate-950/80 border border-slate-800 cursor-pointer hover:border-slate-700 transition">
+                            <input type="checkbox" id="plot_relative_humidity" onchange="updateChartDatasets()" class="rounded border-slate-700 text-cyan-600 focus:ring-0">
+                            <span class="text-xs font-medium text-cyan-400 flex items-center gap-1"><i data-lucide="droplet" class="w-3.5 h-3.5"></i> Humidity</span>
+                        </label>
+                        <label class="flex items-center gap-2 p-2 rounded-lg bg-slate-950/80 border border-slate-800 cursor-pointer hover:border-slate-700 transition">
+                            <input type="checkbox" id="plot_precipitation" onchange="updateChartDatasets()" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                            <span class="text-xs font-medium text-indigo-400 flex items-center gap-1"><i data-lucide="cloud-rain" class="w-3.5 h-3.5"></i> Rain</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Time Series Chart Canvas Container -->
+                <div class="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3">
+                    <div class="relative h-72 w-full">
+                        <canvas id="timeSeriesChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Application Script Logic -->
+    <script>
+        // Preset Regions Bounding Box Definitions
+        const REGION_PRESETS = {
+            bavaria: { name: "Bavaria (Bayern)", latMin: 47.2, latMax: 50.5, lonMin: 8.9, lonMax: 13.8 },
+            nrw: { name: "North Rhine-Westphalia", latMin: 50.3, latMax: 52.5, lonMin: 5.8, lonMax: 9.4 },
+            berlin: { name: "Berlin & Brandenburg", latMin: 51.3, latMax: 53.5, lonMin: 11.2, lonMax: 14.8 },
+            baden: { name: "Baden-Württemberg", latMin: 47.5, latMax: 49.8, lonMin: 7.5, lonMax: 10.5 },
+            north_sea: { name: "German North Sea Coast", latMin: 53.1, latMax: 55.0, lonMin: 6.5, lonMax: 9.2 },
+            saxony: { name: "Saxony (Sachsen)", latMin: 50.1, latMax: 51.7, lonMin: 11.8, lonMax: 15.1 }
+        };
+
+        // Application State
+        const state = {
+            units: 'metric',
+            activeMetric: 'temperature',
+            selectedRegionBounds: null,
+            timeFrame: 'current', // 'current', '24h', '3d', '7d', 'custom'
+            regionPolygonLayer: null,
+            fetchedStations: [],
+            regionWeatherData: {}, // Map stationId -> array of weather records
+            activeStation: null, // Selected station for modal chart
+            map: null,
+            markersGroup: null,
+            drawnItems: null,
+            chartInstance: null
+        };
+
+        // Helper to convert degree to compass cardinal directions
+        function degToCompass(num) {
+            if (num === null || num === undefined) return 'N/A';
+            const val = Math.floor((num / 22.5) + 0.5);
+            const arr = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+            return arr[(val % 16)];
+        }
+
+        // Parameter Configurations & Formatting
+        const METRIC_CONFIGS = {
+            temperature: {
+                label: 'Temperature',
+                key: 'temperature',
+                color: '#3b82f6',
+                min: -5, max: 35,
+                stops: ['#3b82f6', '#06b6d4', '#10b981', '#eab308', '#f97316', '#ef4444'],
+                format: (v) => v === null || v === undefined ? 'N/A' : (state.units === 'imperial' ? `${Math.round(v * 9/5 + 32)}°F` : `${v.toFixed(1)}°C`)
+            },
+            wind_speed: {
+                label: 'Wind Speed',
+                key: 'wind_speed',
+                color: '#10b981',
+                min: 0, max: 60,
+                stops: ['#64748b', '#0ea5e9', '#10b981', '#eab308', '#f97316', '#dc2626'],
+                format: (v) => v === null || v === undefined ? 'N/A' : (state.units === 'imperial' ? `${Math.round(v * 0.621371)} mph` : `${Math.round(v)} km/h`)
+            },
+            wind_direction: {
+                label: 'Wind Direction',
+                key: 'wind_direction',
+                color: '#f59e0b',
+                min: 0, max: 360,
+                stops: ['#3b82f6', '#10b981', '#eab308', '#ef4444', '#8b5cf6', '#3b82f6'],
+                format: (v) => v === null || v === undefined ? 'N/A' : `${Math.round(v)}° (${degToCompass(v)})`
+            },
+            cloud_cover: {
+                label: 'Cloud Cover',
+                key: 'cloud_cover',
+                color: '#a855f7',
+                min: 0, max: 100,
+                stops: ['#fde047', '#94a3b8', '#64748b', '#334155', '#0f172a'],
+                format: (v) => v === null || v === undefined ? 'N/A' : `${Math.round(v)}%`
+            },
+            relative_humidity: {
+                label: 'Humidity',
+                key: 'relative_humidity',
+                color: '#06b6d4',
+                min: 20, max: 100,
+                stops: ['#d97706', '#f59e0b', '#84cc16', '#06b6d4', '#2563eb'],
+                format: (v) => v === null || v === undefined ? 'N/A' : `${Math.round(v)}%`
+            },
+            precipitation: {
+                label: 'Precipitation',
+                key: 'precipitation',
+                color: '#6366f1',
+                min: 0, max: 5,
+                stops: ['#475569', '#38bdf8', '#2563eb', '#1d4ed8', '#7e22ce'],
+                format: (v) => v === null || v === undefined ? 'N/A' : (state.units === 'imperial' ? `${(v * 0.0393701).toFixed(2)} in` : `${v.toFixed(1)} mm`)
+            }
+        };
+
+        window.addEventListener('DOMContentLoaded', () => {
+            initDates();
+            initMap();
+            initSidebarControls();
+            updateLegend();
+            lucide.createIcons();
+        });
+
+        function initDates() {
+            const today = new Date();
+            const past3 = new Date(today);
+            past3.setDate(today.getDate() - 3);
+
+            document.getElementById('endDateInput').value = today.toISOString().split('T')[0];
+            document.getElementById('startDateInput').value = past3.toISOString().split('T')[0];
+        }
+
+        function initMap() {
+            // Leaflet map setup focused on Germany
+            state.map = L.map('map', {
+                center: [51.1657, 10.4515],
+                zoom: 6,
+                zoomControl: false
+            });
+
+            L.control.zoom({ position: 'bottomleft' }).addTo(state.map);
+
+            // STRICTLY Esri World Topographic Map ("Esri Topo") as requested
+            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ, TomTom, Intermap, iPC, USGS, FAO, NPS, NRCAN, GeoBase, Kadaster NL, Ordnance Survey, Esri Japan, METI, Esri China (Hong Kong), swisstopo, MapmyIndia, &copy; OpenStreetMap contributors, and the GIS User Community',
+                maxZoom: 18
+            }).addTo(state.map);
+
+            state.markersGroup = L.layerGroup().addTo(state.map);
+
+            // Bounding box draw tool setup
+            state.drawnItems = new L.FeatureGroup();
+            state.map.addLayer(state.drawnItems);
+
+            const drawControl = new L.Control.Draw({
+                position: 'topleft',
+                draw: {
+                    polygon: false,
+                    polyline: false,
+                    circle: false,
+                    circlemarker: false,
+                    marker: false,
+                    rectangle: {
+                        shapeOptions: {
+                            color: '#3b82f6',
+                            weight: 2,
+                            fillOpacity: 0.15
+                        }
+                    }
+                },
+                edit: {
+                    featureGroup: state.drawnItems,
+                    remove: true
+                }
+            });
+            state.map.addControl(drawControl);
+
+            // Rectangle bounding box creation event listener
+            state.map.on(L.Draw.Event.CREATED, (e) => {
+                state.drawnItems.clearLayers();
+                if (state.regionPolygonLayer) {
+                    state.map.removeLayer(state.regionPolygonLayer);
+                }
+
+                const layer = e.layer;
+                state.drawnItems.addLayer(layer);
+                
+                const bounds = layer.getBounds();
+                state.selectedRegionBounds = {
+                    latMin: bounds.getSouth(),
+                    latMax: bounds.getNorth(),
+                    lonMin: bounds.getWest(),
+                    lonMax: bounds.getEast()
+                };
+
+                document.getElementById('regionPreset').value = 'custom';
+                updateStatusText("Custom region drawn. Choose time frame and click 'Fetch Region Data'.");
+            });
+        }
+
+        function initSidebarControls() {
+            const toggleBtn = document.getElementById('toggleSidebarMobile');
+            const closeBtn = document.getElementById('closeSidebarMobile');
+            const sidebar = document.getElementById('sidebar');
+
+            toggleBtn.addEventListener('click', () => sidebar.classList.remove('-translate-x-full'));
+            closeBtn.addEventListener('click', () => sidebar.classList.add('-translate-x-full'));
+        }
+
+        function handleRegionSelect() {
+            const val = document.getElementById('regionPreset').value;
+            if (val === 'custom') return;
+
+            const region = REGION_PRESETS[val];
+            if (!region) return;
+
+            state.selectedRegionBounds = {
+                latMin: region.latMin,
+                latMax: region.latMax,
+                lonMin: region.lonMin,
+                lonMax: region.lonMax
+            };
+
+            if (state.drawnItems) {
+                state.drawnItems.clearLayers();
+            }
+
+            if (state.regionPolygonLayer) {
+                state.map.removeLayer(state.regionPolygonLayer);
+            }
+
+            const bounds = [
+                [region.latMin, region.lonMin],
+                [region.latMax, region.lonMax]
+            ];
+
+            state.regionPolygonLayer = L.rectangle(bounds, {
+                color: "#0066cc",
+                weight: 2,
+                fillColor: "#0066cc",
+                fillOpacity: 0.12,
+                dashArray: "4, 4"
+            }).addTo(state.map);
+
+            state.map.fitBounds(bounds, { padding: [30, 30] });
+            updateStatusText(`Selected ${region.name}. Click "Fetch Region Data" to load observations.`);
+        }
+
+        function handleTimeFrameChange() {
+            const val = document.getElementById('timeFrameSelect').value;
+            state.timeFrame = val;
+
+            const customContainer = document.getElementById('customDateRangeContainer');
+            if (val === 'custom') {
+                customContainer.classList.remove('hidden');
+            } else {
+                customContainer.classList.add('hidden');
+            }
+        }
+
+        function getTimeFrameDates() {
+            const now = new Date();
+            let dateFrom = new Date(now);
+            let dateTo = new Date(now);
+
+            if (state.timeFrame === 'current') {
+                return { isCurrent: true };
+            } else if (state.timeFrame === '24h') {
+                dateFrom.setHours(now.getHours() - 24);
+            } else if (state.timeFrame === '3d') {
+                dateFrom.setDate(now.getDate() - 3);
+            } else if (state.timeFrame === '7d') {
+                dateFrom.setDate(now.getDate() - 7);
+            } else if (state.timeFrame === 'custom') {
+                const s = document.getElementById('startDateInput').value;
+                const e = document.getElementById('endDateInput').value;
+                if (s) dateFrom = new Date(s);
+                if (e) dateTo = new Date(e);
+            }
+
+            return {
+                isCurrent: false,
+                dateFromISO: dateFrom.toISOString(),
+                dateToISO: dateTo.toISOString(),
+                dateFromStr: dateFrom.toISOString().split('T')[0],
+                dateToStr: dateTo.toISOString().split('T')[0]
+            };
+        }
+
+        // Fetch DWD Observations for Current Region & Selected Time Frame
+        async function fetchDataForCurrentRegion() {
+            if (!state.selectedRegionBounds) {
+                const b = state.map.getBounds();
+                state.selectedRegionBounds = {
+                    latMin: b.getSouth(),
+                    latMax: b.getNorth(),
+                    lonMin: b.getWest(),
+                    lonMax: b.getEast()
+                };
+            }
+
+            const b = state.selectedRegionBounds;
+            const centerLat = (b.latMin + b.latMax) / 2;
+            const centerLon = (b.lonMin + b.lonMax) / 2;
+
+            const southWest = L.latLng(b.latMin, b.lonMin);
+            const northEast = L.latLng(b.latMax, b.lonMax);
+            const radius = Math.min(200000, Math.max(20000, Math.round(southWest.distanceTo(northEast) / 2)));
+
+            showLoading(true, "Querying DWD station network...");
+            updateStatusText("Locating stations in region...");
+
+            try {
+                // Find sources in region
+                const resp = await fetch(`https://api.brightsky.dev/sources?lat=${centerLat.toFixed(3)}&lon=${centerLon.toFixed(3)}&max_dist=${radius}`);
+                if (!resp.ok) throw new Error("Failed to load DWD stations from API");
+
+                const data = await resp.json();
+                if (!data.sources || data.sources.length === 0) throw new Error("No stations found in selected region");
+
+                // Filter stations within bounding box
+                const filteredStations = data.sources
+                    .filter(s => s.dwd_station_id)
+                    .filter(s => s.lat >= b.latMin && s.lat <= b.latMax && s.lon >= b.lonMin && s.lon <= b.lonMax)
+                    .map(s => ({
+                        id: s.dwd_station_id,
+                        name: s.station_name || s.name || `Station ${s.dwd_station_id}`,
+                        lat: s.lat,
+                        lon: s.lon,
+                        height: s.height
+                    }));
+
+                const uniqueMap = new Map();
+                filteredStations.forEach(s => uniqueMap.set(s.id, s));
+                state.fetchedStations = Array.from(uniqueMap.values());
+
+                if (state.fetchedStations.length === 0) {
+                    updateStatusText("No active DWD stations found inside the specified bounding box.");
+                    showLoading(false);
+                    return;
+                }
+
+                showLoading(true, `Fetching weather recordings for ${state.fetchedStations.length} DWD stations...`);
+                
+                // Fetch weather records per station based on time frame
+                await fetchRegionWeatherReadings();
+
+                updateStatusText(`Loaded data for ${state.fetchedStations.length} DWD weather stations.`);
+                document.getElementById('btnExportRegionCSV').disabled = false;
+                
+                renderMapMarkers();
+                renderStationList();
+                calculateSummaryStats();
+
+            } catch (err) {
+                console.error(err);
+                updateStatusText(`Error querying region: ${err.message}`);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function fetchCurrentViewportData() {
+            const b = state.map.getBounds();
+            state.selectedRegionBounds = {
+                latMin: b.getSouth(),
+                latMax: b.getNorth(),
+                lonMin: b.getWest(),
+                lonMax: b.getEast()
+            };
+            document.getElementById('regionPreset').value = 'custom';
+            fetchDataForCurrentRegion();
+        }
+
+        async function fetchRegionWeatherReadings() {
+            state.regionWeatherData = {};
+            const timeInfo = getTimeFrameDates();
+
+            const promises = state.fetchedStations.map(async (station) => {
+                try {
+                    let url = '';
+                    if (timeInfo.isCurrent) {
+                        url = `https://api.brightsky.dev/current_weather?lat=${station.lat}&lon=${station.lon}`;
+                    } else {
+                        url = `https://api.brightsky.dev/weather?lat=${station.lat}&lon=${station.lon}&date=${timeInfo.dateFromISO}&last_date=${timeInfo.dateToISO}`;
+                    }
+
+                    const resp = await fetch(url);
+                    if (resp.ok) {
+                        const json = await resp.json();
+                        if (timeInfo.isCurrent && json.weather) {
+                            state.regionWeatherData[station.id] = [json.weather];
+                        } else if (json.weather && Array.isArray(json.weather)) {
+                            state.regionWeatherData[station.id] = json.weather;
+                        }
+                    }
+                } catch (e) {
+                    console.warn(`Station ${station.id} weather query failed`, e);
+                }
+            });
+
+            await Promise.all(promises);
+            document.getElementById('timestampFooter').innerText = `Updated: ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+        }
+
+        // Helper to get latest weather record for a station
+        function getLatestRecord(stationId) {
+            const records = state.regionWeatherData[stationId];
+            if (!records || records.length === 0) return null;
+            return records[records.length - 1];
+        }
+
+        // Render Map Markers with Rotatable Wind Direction Vectors
+        function renderMapMarkers() {
+            state.markersGroup.clearLayers();
+            const config = METRIC_CONFIGS[state.activeMetric];
+
+            state.fetchedStations.forEach(station => {
+                const latest = getLatestRecord(station.id);
+                const rawVal = latest ? latest[state.activeMetric] : null;
+                const formattedVal = config.format(rawVal);
+                const color = getColorForValue(rawVal, config);
+
+                const windDir = (latest && latest.wind_direction !== null && latest.wind_direction !== undefined) ? latest.wind_direction : 0;
+                
+                const windArrowSvg = (latest && latest.wind_direction !== null && latest.wind_direction !== undefined) ? `
+                    <svg class="w-3.5 h-3.5 shrink-0 transition-transform" style="transform: rotate(${windDir}deg);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <line x1="12" y1="19" x2="12" y2="5"></line>
+                        <polyline points="5 12 12 5 19 12"></polyline>
+                    </svg>
+                ` : '';
+
+                const iconHtml = `
+                    <div class="group relative flex items-center justify-center transition-transform hover:scale-110">
+                        <div class="px-2.5 py-1 rounded-full text-[11px] font-bold shadow-xl border border-white/20 text-white flex items-center gap-1 backdrop-blur-md" style="background-color: ${color}E6;">
+                            ${windArrowSvg}
+                            <span>${formattedVal}</span>
+                        </div>
+                    </div>
+                `;
+
+                const customIcon = L.divIcon({
+                    html: iconHtml,
+                    className: 'custom-weather-marker',
+                    iconSize: [64, 26],
+                    iconAnchor: [32, 13]
+                });
+
+                const marker = L.marker([station.lat, station.lon], { icon: customIcon });
+
+                marker.on('click', () => openStationModal(station));
+                state.markersGroup.addLayer(marker);
+            });
+        }
+
+        function renderStationList() {
+            const listEl = document.getElementById('stationList');
+            if (state.fetchedStations.length === 0) return;
+
+            const config = METRIC_CONFIGS[state.activeMetric];
+
+            listEl.innerHTML = state.fetchedStations.map(s => {
+                const latest = getLatestRecord(s.id);
+                const rawVal = latest ? latest[state.activeMetric] : null;
+                const formattedVal = config.format(rawVal);
+
+                const windDir = (latest && latest.wind_direction !== null && latest.wind_direction !== undefined) ? latest.wind_direction : 0;
+                const arrowSvg = (latest && latest.wind_direction !== null && latest.wind_direction !== undefined) ? `
+                    <svg class="w-3.5 h-3.5 inline-block transition-transform text-amber-400" style="transform: rotate(${windDir}deg);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <line x1="12" y1="19" x2="12" y2="5"></line>
+                        <polyline points="5 12 12 5 19 12"></polyline>
+                    </svg>
+                ` : '';
+
+                return `
+                    <div onclick="openStationModalById('${s.id}')" class="p-2.5 rounded-lg bg-slate-900/50 hover:bg-slate-800/80 border border-slate-800/80 transition cursor-pointer flex items-center justify-between">
+                        <div>
+                            <div class="font-medium text-xs text-slate-200">${s.name}</div>
+                            <div class="text-[10px] text-slate-500">ID: ${s.id}</div>
+                        </div>
+                        <div class="text-right flex items-center gap-1.5">
+                            <div>
+                                <div class="font-bold text-xs text-slate-100">${formattedVal}</div>
+                                <div class="text-[9px] text-slate-500 uppercase">${config.label}</div>
+                            </div>
+                            ${state.activeMetric === 'wind_direction' ? arrowSvg : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function calculateSummaryStats() {
+            const summaryPanel = document.getElementById('regionSummary');
+            const allLatestRecords = state.fetchedStations.map(s => getLatestRecord(s.id)).filter(r => r !== null);
+
+            if (allLatestRecords.length === 0) {
+                summaryPanel.classList.add('hidden');
+                return;
+            }
+
+            summaryPanel.classList.remove('hidden');
+            document.getElementById('summaryCount').innerText = allLatestRecords.length;
+
+            const temps = allLatestRecords.map(w => w.temperature).filter(t => t !== null && t !== undefined);
+            if (temps.length > 0) {
+                const avgTemp = temps.reduce((a, b) => a + b, 0) / temps.length;
+                document.getElementById('summaryAvgTemp').innerText = METRIC_CONFIGS.temperature.format(avgTemp);
+            }
+
+            const winds = allLatestRecords.map(w => w.wind_speed).filter(w => w !== null && w !== undefined);
+            if (winds.length > 0) {
+                const maxWind = Math.max(...winds);
+                document.getElementById('summaryMaxWind').innerText = METRIC_CONFIGS.wind_speed.format(maxWind);
+            }
+        }
+
+        function openStationModalById(stationId) {
+            const station = state.fetchedStations.find(s => s.id === stationId);
+            if (station) openStationModal(station);
+        }
+
+        // Open Station Modal & Plot Chart.js Time Series with selectable measurements
+        function openStationModal(station) {
+            state.activeStation = station;
+
+            document.getElementById('modalStationName').innerText = station.name;
+            document.getElementById('modalStationMeta').innerText = `ID: ${station.id} | Lat: ${station.lat.toFixed(3)}, Lon: ${station.lon.toFixed(3)} ${station.height ? '| Elevation: ' + station.height + 'm' : ''}`;
+
+            const records = state.regionWeatherData[station.id] || [];
+            const latest = records.length > 0 ? records[records.length - 1] : null;
+
+            // Modal summary metrics cards
+            const cardsContainer = document.getElementById('modalSummaryCards');
+            if (latest) {
+                const windDirVal = latest.wind_direction !== null && latest.wind_direction !== undefined ? `${latest.wind_direction}° (${degToCompass(latest.wind_direction)})` : '--';
+                
+                cardsContainer.innerHTML = `
+                    <div class="p-2 rounded-xl bg-slate-950/80 border border-slate-800">
+                        <span class="text-[9px] text-slate-400 block">Temperature</span>
+                        <span class="text-xs font-bold text-amber-400">${METRIC_CONFIGS.temperature.format(latest.temperature)}</span>
+                    </div>
+                    <div class="p-2 rounded-xl bg-slate-950/80 border border-slate-800">
+                        <span class="text-[9px] text-slate-400 block">Wind Speed</span>
+                        <span class="text-xs font-bold text-teal-400">${METRIC_CONFIGS.wind_speed.format(latest.wind_speed)}</span>
+                    </div>
+                    <div class="p-2 rounded-xl bg-slate-950/80 border border-slate-800">
+                        <span class="text-[9px] text-slate-400 block">Wind Direction</span>
+                        <span class="text-xs font-bold text-amber-500">${windDirVal}</span>
+                    </div>
+                    <div class="p-2 rounded-xl bg-slate-950/80 border border-slate-800">
+                        <span class="text-[9px] text-slate-400 block">Cloud Cover</span>
+                        <span class="text-xs font-bold text-purple-400">${latest.cloud_cover !== null && latest.cloud_cover !== undefined ? latest.cloud_cover + '%' : '--'}</span>
+                    </div>
+                    <div class="p-2 rounded-xl bg-slate-950/80 border border-slate-800">
+                        <span class="text-[9px] text-slate-400 block">Humidity</span>
+                        <span class="text-xs font-bold text-cyan-400">${latest.relative_humidity || '--'}%</span>
+                    </div>
+                    <div class="p-2 rounded-xl bg-slate-950/80 border border-slate-800">
+                        <span class="text-[9px] text-slate-400 block">Precipitation</span>
+                        <span class="text-xs font-bold text-indigo-400">${METRIC_CONFIGS.precipitation.format(latest.precipitation)}</span>
+                    </div>
+                `;
+            } else {
+                cardsContainer.innerHTML = `<div class="col-span-6 text-xs text-slate-500">No current weather data available for this station.</div>`;
+            }
+
+            document.getElementById('chartTimeframeLabel').innerText = `${records.length} datapoints recorded`;
+
+            // Render Flexible Multi-Measurement Chart.js
+            renderTimeSeriesChart(records);
+
+            document.getElementById('stationModal').classList.remove('hidden');
+            lucide.createIcons();
+        }
+
+        function closeStationModal() {
+            document.getElementById('stationModal').classList.add('hidden');
+            if (state.chartInstance) {
+                state.chartInstance.destroy();
+                state.chartInstance = null;
+            }
+        }
+
+        function updateChartDatasets() {
+            if (state.activeStation) {
+                const records = state.regionWeatherData[state.activeStation.id] || [];
+                renderTimeSeriesChart(records);
+            }
+        }
+
+        // Render Multi-Measurement Flexible Chart using Chart.js
+        function renderTimeSeriesChart(records) {
+            const ctx = document.getElementById('timeSeriesChart').getContext('2d');
+            if (state.chartInstance) {
+                state.chartInstance.destroy();
+            }
+
+            if (!records || records.length === 0) {
+                return;
+            }
+
+            const labels = records.map(r => {
+                const d = new Date(r.timestamp);
+                return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            });
+
+            const showTemp = document.getElementById('plot_temperature').checked;
+            const showWind = document.getElementById('plot_wind_speed').checked;
+            const showWindDir = document.getElementById('plot_wind_direction').checked;
+            const showCloud = document.getElementById('plot_cloud_cover').checked;
+            const showHumidity = document.getElementById('plot_relative_humidity').checked;
+            const showPrecip = document.getElementById('plot_precipitation').checked;
+
+            const datasets = [];
+
+            if (showTemp) {
+                datasets.push({
+                    label: `Temperature (${state.units === 'imperial' ? '°F' : '°C'})`,
+                    data: records.map(r => state.units === 'imperial' && r.temperature !== null ? Math.round(r.temperature * 9/5 + 32) : r.temperature),
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.3,
+                    yAxisID: 'yTemp'
+                });
+            }
+
+            if (showWind) {
+                datasets.push({
+                    label: `Wind Speed (${state.units === 'imperial' ? 'mph' : 'km/h'})`,
+                    data: records.map(r => state.units === 'imperial' && r.wind_speed !== null ? Math.round(r.wind_speed * 0.621371) : r.wind_speed),
+                    borderColor: '#10b981',
+                    backgroundColor: 'transparent',
+                    borderWidth: 2,
+                    tension: 0.3,
+                    yAxisID: 'yWind'
+                });
+            }
+
+            if (showWindDir) {
+                datasets.push({
+                    label: 'Wind Direction (°)',
+                    data: records.map(r => r.wind_direction),
+                    borderColor: '#f59e0b',
+                    backgroundColor: 'transparent',
+                    borderWidth: 1.5,
+                    borderDash: [2, 2],
+                    pointStyle: 'triangle',
+                    pointRadius: 3,
+                    showLine: true,
+                    tension: 0.1,
+                    yAxisID: 'yDeg'
+                });
+            }
+
+            if (showCloud) {
+                datasets.push({
+                    label: 'Cloud Cover (%)',
+                    data: records.map(r => r.cloud_cover),
+                    borderColor: '#a855f7',
+                    backgroundColor: 'rgba(168, 85, 247, 0.15)',
+                    borderWidth: 1.5,
+                    fill: true,
+                    tension: 0.2,
+                    yAxisID: 'yPct'
+                });
+            }
+
+            if (showHumidity) {
+                datasets.push({
+                    label: 'Humidity (%)',
+                    data: records.map(r => r.relative_humidity),
+                    borderColor: '#06b6d4',
+                    backgroundColor: 'transparent',
+                    borderWidth: 1.5,
+                    tension: 0.3,
+                    yAxisID: 'yPct'
+                });
+            }
+
+            if (showPrecip) {
+                datasets.push({
+                    label: `Precipitation (${state.units === 'imperial' ? 'in' : 'mm'})`,
+                    data: records.map(r => state.units === 'imperial' && r.precipitation !== null ? (r.precipitation * 0.0393701) : r.precipitation),
+                    type: 'bar',
+                    backgroundColor: 'rgba(99, 102, 241, 0.5)',
+                    borderColor: '#6366f1',
+                    borderWidth: 1,
+                    yAxisID: 'yPrecip'
+                });
+            }
+
+            state.chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    plugins: {
+                        legend: {
+                            labels: { color: '#94a3b8', font: { size: 11 } }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                            titleColor: '#f8fafc',
+                            bodyColor: '#cbd5e1',
+                            borderColor: 'rgba(255,255,255,0.1)',
+                            borderWidth: 1,
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) label += ': ';
+                                    if (context.parsed.y !== null) {
+                                        label += context.parsed.y;
+                                        if (context.dataset.label.includes('Wind Direction')) {
+                                            label += `° (${degToCompass(context.parsed.y)})`;
+                                        }
+                                    }
+                                    return label;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: { color: '#64748b', font: { size: 10 }, maxTicksLimit: 8 }
+                        },
+                        yTemp: {
+                            type: 'linear',
+                            display: showTemp,
+                            position: 'left',
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: { color: '#3b82f6', font: { size: 10 } },
+                            title: { display: showTemp, text: 'Temp', color: '#3b82f6', font: { size: 10 } }
+                        },
+                        yWind: {
+                            type: 'linear',
+                            display: showWind,
+                            position: 'right',
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#10b981', font: { size: 10 } },
+                            title: { display: showWind, text: 'Wind', color: '#10b981', font: { size: 10 } }
+                        },
+                        yDeg: {
+                            type: 'linear',
+                            display: showWindDir,
+                            position: 'right',
+                            min: 0,
+                            max: 360,
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#f59e0b', font: { size: 10 }, stepSize: 90 },
+                            title: { display: showWindDir, text: 'Dir (°)', color: '#f59e0b', font: { size: 10 } }
+                        },
+                        yPct: {
+                            type: 'linear',
+                            display: showCloud || showHumidity,
+                            position: 'right',
+                            min: 0,
+                            max: 100,
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#a855f7', font: { size: 10 } },
+                            title: { display: showCloud || showHumidity, text: '%', color: '#a855f7', font: { size: 10 } }
+                        },
+                        yPrecip: {
+                            type: 'linear',
+                            display: showPrecip,
+                            position: 'left',
+                            min: 0,
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#6366f1', font: { size: 10 } },
+                            title: { display: showPrecip, text: 'Rain', color: '#6366f1', font: { size: 10 } }
+                        }
+                    }
+                }
+            });
+        }
+
+        // CSV Export Functions
+        function exportRegionDataToCSV() {
+            if (state.fetchedStations.length === 0) return;
+
+            let csvContent = "station_id,station_name,latitude,longitude,timestamp,temperature_c,wind_speed_kmh,wind_direction_deg,cloud_cover_pct,relative_humidity_pct,precipitation_mm,pressure_msl_hpa\n";
+
+            state.fetchedStations.forEach(s => {
+                const records = state.regionWeatherData[s.id] || [];
+                records.forEach(r => {
+                    const row = [
+                        `"${s.id}"`,
+                        `"${s.name.replace(/"/g, '""')}"`,
+                        s.lat,
+                        s.lon,
+                        `"${r.timestamp}"`,
+                        r.temperature !== null && r.temperature !== undefined ? r.temperature : "",
+                        r.wind_speed !== null && r.wind_speed !== undefined ? r.wind_speed : "",
+                        r.wind_direction !== null && r.wind_direction !== undefined ? r.wind_direction : "",
+                        r.cloud_cover !== null && r.cloud_cover !== undefined ? r.cloud_cover : "",
+                        r.relative_humidity !== null && r.relative_humidity !== undefined ? r.relative_humidity : "",
+                        r.precipitation !== null && r.precipitation !== undefined ? r.precipitation : "",
+                        r.pressure_msl !== null && r.pressure_msl !== undefined ? r.pressure_msl : ""
+                    ];
+                    csvContent += row.join(",") + "\n";
+                });
+            });
+
+            downloadCSV(csvContent, "dwd_region_weather_data.csv");
+        }
+
+        function exportStationCSV() {
+            if (!state.activeStation) return;
+            const station = state.activeStation;
+            const records = state.regionWeatherData[station.id] || [];
+
+            let csvContent = "station_id,station_name,timestamp,temperature_c,wind_speed_kmh,wind_direction_deg,cloud_cover_pct,relative_humidity_pct,precipitation_mm,pressure_msl_hpa\n";
+
+            records.forEach(r => {
+                const row = [
+                    `"${station.id}"`,
+                    `"${station.name.replace(/"/g, '""')}"`,
+                    `"${r.timestamp}"`,
+                    r.temperature !== null && r.temperature !== undefined ? r.temperature : "",
+                    r.wind_speed !== null && r.wind_speed !== undefined ? r.wind_speed : "",
+                    r.wind_direction !== null && r.wind_direction !== undefined ? r.wind_direction : "",
+                    r.cloud_cover !== null && r.cloud_cover !== undefined ? r.cloud_cover : "",
+                    r.relative_humidity !== null && r.relative_humidity !== undefined ? r.relative_humidity : "",
+                    r.precipitation !== null && r.precipitation !== undefined ? r.precipitation : "",
+                    r.pressure_msl !== null && r.pressure_msl !== undefined ? r.pressure_msl : ""
+                ];
+                csvContent += row.join(",") + "\n";
+            });
+
+            downloadCSV(csvContent, `dwd_station_${station.id}_data.csv`);
+        }
+
+        function downloadCSV(csvString, filename) {
+            const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.setAttribute("href", url);
+            link.setAttribute("download", filename);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function clearCurrentRegion() {
+            state.fetchedStations = [];
+            state.regionWeatherData = {};
+            state.selectedRegionBounds = null;
+
+            if (state.regionPolygonLayer) {
+                state.map.removeLayer(state.regionPolygonLayer);
+            }
+            if (state.drawnItems) {
+                state.drawnItems.clearLayers();
+            }
+            state.markersGroup.clearLayers();
+
+            document.getElementById('regionPreset').value = 'custom';
+            document.getElementById('btnExportRegionCSV').disabled = true;
+            document.getElementById('regionSummary').classList.add('hidden');
+            document.getElementById('stationList').innerHTML = `
+                <div class="h-full flex flex-col items-center justify-center text-center p-6 text-slate-500 text-xs">
+                    <i data-lucide="map-pin-off" class="w-10 h-10 mb-2 stroke-1 text-slate-600"></i>
+                    <p>Cleared region buffer.</p>
+                </div>
+            `;
+            updateStatusText("Data cleared. Select region preset or draw a bounding box.");
+            lucide.createIcons();
+        }
+
+        function selectMetric(metricKey) {
+            state.activeMetric = metricKey;
+
+            document.querySelectorAll('#metricSelector .metric-btn').forEach(btn => {
+                if (btn.dataset.metric === metricKey) {
+                    btn.className = 'metric-btn active text-xs py-1.5 px-2 rounded border border-blue-500/50 bg-blue-500/20 text-blue-300 flex items-center justify-center gap-1 font-medium transition';
+                } else {
+                    btn.className = 'metric-btn text-xs py-1.5 px-2 rounded border border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1 font-medium transition';
+                }
+            });
+
+            renderMapMarkers();
+            renderStationList();
+            updateLegend();
+        }
+
+        function setUnits(unit) {
+            state.units = unit;
+
+            document.getElementById('unitMetricBtn').className = unit === 'metric' 
+                ? 'px-2.5 py-1 rounded-md transition bg-blue-600 text-white shadow-sm'
+                : 'px-2.5 py-1 rounded-md transition text-slate-400 hover:text-slate-200';
+
+            document.getElementById('unitImperialBtn').className = unit === 'imperial' 
+                ? 'px-2.5 py-1 rounded-md transition bg-blue-600 text-white shadow-sm'
+                : 'px-2.5 py-1 rounded-md transition text-slate-400 hover:text-slate-200';
+
+            renderMapMarkers();
+            renderStationList();
+            calculateSummaryStats();
+            updateLegend();
+
+            if (state.activeStation && !document.getElementById('stationModal').classList.contains('hidden')) {
+                openStationModal(state.activeStation);
+            }
+        }
+
+        function getColorForValue(val, config) {
+            if (val === null || val === undefined) return '#64748b';
+            const norm = Math.min(Math.max((val - config.min) / (config.max - config.min), 0), 1);
+            const stops = config.stops;
+            const idx = Math.floor(norm * (stops.length - 1));
+            return stops[idx];
+        }
+
+        function updateLegend() {
+            const config = METRIC_CONFIGS[state.activeMetric];
+            let unitLabel = state.units === 'imperial' ? (config.key === 'temperature' ? '°F' : config.key === 'wind_speed' ? 'mph' : config.key === 'precipitation' ? 'in' : '%') : (config.key === 'temperature' ? '°C' : config.key === 'wind_speed' ? 'km/h' : config.key === 'precipitation' ? 'mm' : config.key === 'wind_direction' ? 'deg' : '%');
+            
+            document.getElementById('legendTitle').innerText = `${config.label} (${unitLabel})`;
+
+            const gradientEl = document.getElementById('legendGradient');
+            gradientEl.innerHTML = config.stops.map(color => `
+                <div class="w-6 h-3 rounded-sm" style="background-color: ${color}"></div>
+            `).join('');
+
+            document.getElementById('legendLabels').innerHTML = `
+                <span>${config.format(config.min)}</span>
+                <span>${config.format(config.max)}</span>
+            `;
+        }
+
+        function updateStatusText(msg) {
+            document.getElementById('statusText').innerText = msg;
+        }
+
+        function showLoading(show, message = "Loading...") {
+            const loader = document.getElementById('mapLoading');
+            document.getElementById('loadingMessage').innerText = message;
+            if (show) loader.classList.remove('hidden');
+            else loader.classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
